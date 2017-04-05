@@ -1,12 +1,11 @@
 package examples
 
-import akka.actor.ActorSystem
+import akka.actor._
 import akka.cluster.Cluster
-import akka.contrib.d3._
+import akka.stream.ActorMaterializer
 import com.typesafe.config.ConfigFactory
 
-import scala.concurrent.Future
-import scala.util.{Failure, Random, Success}
+import scala.util.{Failure, Success}
 
 object Clustered extends App {
 
@@ -14,60 +13,40 @@ object Clustered extends App {
     s"""
        |akka.loglevel = "INFO"
        |akka.actor.provider = "cluster"
-       |akka.contrib.d3.provider = "cluster"
-       |akka.contrib.d3.invoices.passivation-timeout = 5 s
+       |akka.cluster.roles = [invoices]
+       |akka.contrib.d3.topology = "cluster"
+       |akka.contrib.d3.writeside.journal.plugin = "cassandra-journal"
+       |akka.contrib.d3.writeside.invoices.passivation-timeout = 5 s
+       |akka.contrib.d3.query.provider = "cassandra"
+       |akka.contrib.d3.query.invoices.read-journal.plugin = "cassandra-invoice-query-journal"
      """.stripMargin
   ).withFallback(ConfigFactory.load())
 
   implicit val system = ActorSystem("ClusterTest", config)
+  implicit val materializer = ActorMaterializer()
   implicit val dispatcher = system.dispatcher
   val cluster = Cluster(system)
   cluster.join(cluster.selfAddress)
 
-  Domain(system)
-    .register[Invoice](
-      behavior = InvoiceBehavior,
-      name = Option("invoices")
-    )
+  val startupApp = new StartupApp(system)
+  val writeSideApp = new WriteSideApp(system)
+  val readSideApp = new ReadSideApp(system)
 
-  Thread.sleep(8000)
+  val result = for {
+    _ <- startupApp.run()
+    res <- writeSideApp.run()
+  } yield res
 
-  val aggregates = List.fill(1000){ Random.nextInt(100000) }.map { id ⇒ Domain(system).aggregateRef[Invoice](Invoice.Id(s"$id")) }
-
-  val result = Future.sequence {
-    aggregates.map(aggregate ⇒
-      for {
-        e1 ← aggregate ? InvoiceProtocol.InvoiceCommand.Create(Invoice.Amount(BigDecimal(200)))
-        s1 ← aggregate.state
-        e2 ← aggregate ? InvoiceProtocol.InvoiceCommand.Close("paid")
-        s2 ← aggregate.state
-        q3 ← aggregate.exists(_.amount.value == BigDecimal(200))
-        q4 ← aggregate.isInitialized
-      } yield (e1, s1, e2, s2, q3, q4))
-  }
-
-  // scalastyle:off
   result.onComplete {
-    case Success(l) ⇒
-      l.foreach {
-        case (e1, s1, e2, s2, q3, q4) ⇒
-          println(
-            s"""
-             |1. events:       $e1
-             |   state:        $s1
-             |2. events:       $e2
-             |   state:        $s2
-             |3. amnt == 200?: $q3
-             |4. initialized?: $q4
-       """.stripMargin
-          )
-      }
-      Thread.sleep(10000)
+    case Success(_) =>
+      readSideApp.run()
+      Thread.sleep(3000)
+
       system.terminate()
-    case Failure(exception) ⇒
+
+    case Failure(exception) =>
       println(s"Something went wrong: ${exception.getMessage}")
-      Thread.sleep(10000)
+      Thread.sleep(3000)
       system.terminate()
   }
-  // scalastyle:on
 }

@@ -17,6 +17,8 @@ object Clustered extends App {
        |akka.contrib.d3.topology = "cluster"
        |akka.contrib.d3.writeside.journal.plugin = "cassandra-journal"
        |akka.contrib.d3.writeside.invoices.passivation-timeout = 5 s
+       |akka.contrib.d3.readside.processor.invoices.auto-start = false
+       |akka.contrib.d3.readside.processor.run-on-role = "invoices"
        |akka.contrib.d3.query.provider = "cassandra"
        |akka.contrib.d3.query.invoices.read-journal.plugin = "cassandra-invoice-query-journal"
      """.stripMargin

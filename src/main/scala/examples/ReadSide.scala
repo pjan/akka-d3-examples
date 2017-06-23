@@ -12,6 +12,7 @@ import scala.concurrent.Future
 import scala.concurrent.duration._
 
 class ReadSideApp(system: ActorSystem) {
+  import system.dispatcher
 
   val session = CassandraSession(system, "invoices-readside")
   val offsetStore = CassandraOffsetStore(system, session, 10.seconds)
@@ -21,17 +22,29 @@ class ReadSideApp(system: ActorSystem) {
   def run(): Unit = {
     ReadSide(system).register[InvoiceEvent](invoiceEventProcessor)
 
+    ReadSide(system).status("invoices").foreach(println)
+
     Thread.sleep(5000)
 
     ReadSide(system).start("invoices")
 
-    Thread.sleep(10000)
+    Thread.sleep(5000)
 
-    ReadSide(system).stop("invoices")
+    ReadSide(system).status("invoices").foreach(println)
 
     Thread.sleep(5000)
 
+    ReadSide(system).stop("invoices")
+
+    Thread.sleep(2500)
+
+    ReadSide(system).status("invoices").foreach(println)
+
+    Thread.sleep(2500)
+
     ReadSide(system).rewind("invoices", NoOffset)
+
+    ReadSide(system).status("invoices").foreach(println)
 
     Thread.sleep(3000)
 
